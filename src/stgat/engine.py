@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import logging
+import time
 from pathlib import Path
 from typing import Any
 
 import torch
+from tqdm import tqdm
 
 from .data import StandardScaler
 from .metrics import masked_mae, metric_tuple
 from .model import STGATWithAdjacency
+
+logger = logging.getLogger(__name__)
 
 
 def should_use_amp(model: torch.nn.Module, device: torch.device, requested: bool) -> bool:
@@ -43,6 +48,8 @@ def train_one_epoch(
     grad_clip: float | None = 5.0,
     use_amp: bool = False,
     accumulation_steps: int = 1,
+    epoch: int | None = None,
+    total_epochs: int | None = None,
 ) -> float:
     model.train()
     adjacency = adjacency.to(device) if adjacency is not None else None
@@ -50,7 +57,15 @@ def train_one_epoch(
     losses: list[float] = []
     scaler_amp = torch.amp.GradScaler("cuda", enabled=use_amp and device.type == "cuda")
     optimizer.zero_grad(set_to_none=True)
-    for step, (x, y) in enumerate(dataloader, start=1):
+
+    desc = "Training"
+    if epoch is not None and total_epochs is not None:
+        desc = f"Epoch {epoch}/{total_epochs}"
+    elif epoch is not None:
+        desc = f"Epoch {epoch}"
+
+    progress = tqdm(dataloader, desc=desc, unit="batch", leave=False, dynamic_ncols=True)
+    for step, (x, y) in enumerate(progress, start=1):
         x = x.to(device)
         y = y.to(device)
         with torch.amp.autocast("cuda", enabled=use_amp and device.type == "cuda"):
@@ -68,6 +83,8 @@ def train_one_epoch(
             scaler_amp.update()
             optimizer.zero_grad(set_to_none=True)
         losses.append(float(loss.detach().cpu()))
+        running_avg = sum(losses[-accumulation_steps:]) / min(len(losses), accumulation_steps)
+        progress.set_postfix(loss=f"{running_avg:.4f}", refresh=False)
     if len(losses) % accumulation_steps != 0:
         if grad_clip is not None:
             scaler_amp.unscale_(optimizer)
@@ -86,13 +103,15 @@ def evaluate(
     device: torch.device,
     null_value: float = 0.0,
     use_amp: bool = False,
+    desc: str = "Validating",
 ) -> dict[str, Any]:
     model.eval()
     adjacency = adjacency.to(device) if adjacency is not None else None
     use_amp = should_use_amp(model, device, use_amp)
     predictions = []
     labels = []
-    for x, y in dataloader:
+    progress = tqdm(dataloader, desc=desc, unit="batch", leave=False, dynamic_ncols=True)
+    for x, y in progress:
         x = x.to(device)
         y = y.to(device)
         with torch.amp.autocast("cuda", enabled=use_amp and device.type == "cuda"):
@@ -106,6 +125,7 @@ def evaluate(
         mae, mape, rmse = metric_tuple(pred[:, index], true[:, index], null_value)
         horizons.append({"horizon": index + 1, "mae": mae, "mape": mape, "rmse": rmse})
     mae, mape, rmse = metric_tuple(pred, true, null_value)
+    progress.close()
     return {"average": {"mae": mae, "mape": mape, "rmse": rmse}, "horizons": horizons}
 
 

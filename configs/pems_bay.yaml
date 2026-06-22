@@ -26,3 +26,13 @@ training:
   accumulation_steps: 4
   num_workers: 0
   checkpoint_path: checkpoints/pems_bay_best.pt
+  checkpoint_every: 20  # periodic checkpoint every N epochs (0 to disable)
+  seed: 42  # random seed for reproducibility (null to skip)
+  early_stopping:
+    patience: 25  # stop after N epochs without improvement (0 to disable)
+    min_delta: 0.0  # minimum change to qualify as improvement
+  scheduler:
+    type: plateau  # "plateau" or "cosine"
+    factor: 0.5
+    patience: 10
+    min_lr: 1.0e-6
