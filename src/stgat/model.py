@@ -39,12 +39,12 @@ class GatedTemporalConv(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # [B, T, N, C] -> [B, C, T, N]
-        residual = x.permute(0, 3, 1, 2)
+        residual = x.permute(0, 3, 1, 2).contiguous()
         pad = (self.kernel_size - 1) * self.dilation
-        padded = F.pad(residual, (0, 0, pad, 0))
-        gate = torch.sigmoid(self.gate_conv(padded))
-        filtered = torch.tanh(self.filter_conv(padded))
-        projected = self.residual_conv(residual)
+        padded = F.pad(residual, (0, 0, pad, 0)).contiguous()
+        gate = torch.sigmoid(self.gate_conv(padded)).contiguous()
+        filtered = torch.tanh(self.filter_conv(padded)).contiguous()
+        projected = self.residual_conv(residual).contiguous()
         out = gate * filtered + (1.0 - gate) * projected
         out = F.relu(self.norm(out))
         return out.permute(0, 2, 3, 1).contiguous()

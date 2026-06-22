@@ -1,12 +1,30 @@
 import unittest
+from unittest.mock import patch
 
 import torch
 
 from stgat.engine import save_checkpoint
-from stgat.model import GatedFusion, STGAT, STGATWithAdjacency
+from stgat.model import GatedFusion, GatedTemporalConv, STGAT, STGATWithAdjacency
 
 
 class ModelTest(unittest.TestCase):
+    def test_temporal_convolution_uses_contiguous_conv_inputs(self):
+        layer = GatedTemporalConv(in_channels=2, out_channels=4)
+        x = torch.randn(3, 12, 5, 2)
+        conv_inputs_are_contiguous = []
+        original_forward = torch.nn.Conv2d.forward
+
+        def checked_forward(module, input):
+            conv_inputs_are_contiguous.append(input.is_contiguous())
+            self.assertTrue(input.is_contiguous())
+            return original_forward(module, input)
+
+        with patch.object(torch.nn.Conv2d, "forward", checked_forward):
+            output = layer(x)
+
+        self.assertEqual(output.shape, (3, 12, 5, 4))
+        self.assertEqual(conv_inputs_are_contiguous, [True, True, True])
+
     def test_stgat_forward_shape_and_adaptive_adjacency_registration(self):
         model = STGAT(
             num_nodes=5,
