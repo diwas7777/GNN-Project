@@ -60,13 +60,17 @@ def main() -> None:
         dropout=model_config["dropout"],
     ).to(device)
     adjacency_for_engine = adjacency
+    use_amp = device.type == "cuda" and training.get("amp", True)
     if device.type == "cuda" and training.get("multi_gpu", False) and torch.cuda.device_count() > 1:
         model = torch.nn.DataParallel(STGATWithAdjacency(model, adjacency.to(device)))
         adjacency_for_engine = None
         print(f"Using {torch.cuda.device_count()} GPUs with DataParallel")
+        if use_amp:
+            use_amp = False
+            print("Disabling CUDA automatic mixed precision with DataParallel")
     else:
         print(f"Using device: {device}")
-    if device.type == "cuda" and training.get("amp", True):
+    if use_amp:
         print("Using CUDA automatic mixed precision")
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -87,7 +91,7 @@ def main() -> None:
             device,
             null_value=training.get("null_value", 0.0),
             grad_clip=training.get("grad_clip", 5.0),
-            use_amp=training.get("amp", True),
+            use_amp=use_amp,
             accumulation_steps=training.get("accumulation_steps", 1),
         )
         val_metrics = evaluate(
@@ -97,7 +101,7 @@ def main() -> None:
             arrays["scaler"],
             device,
             null_value=training.get("null_value", 0.0),
-            use_amp=training.get("amp", True),
+            use_amp=use_amp,
         )
         val_mae = val_metrics["average"]["mae"]
         print(f"epoch={epoch} train_mae={train_mae:.4f} val_mae={val_mae:.4f}")

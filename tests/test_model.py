@@ -41,6 +41,22 @@ class ModelTest(unittest.TestCase):
         self.assertEqual(output.shape, (3, 5, 4))
         self.assertEqual(output.dtype, torch.float16)
 
+    def test_graph_attention_linear_math_uses_float32_for_half_precision_inputs(self):
+        head = GraphAttentionHead(in_features=2, out_features=4, dropout=0.0).half()
+        x = torch.randn(3, 5, 2).half()
+        adjacency = torch.eye(5).half()
+        original_linear = torch.nn.functional.linear
+
+        def checked_linear(input, weight, bias=None):
+            self.assertEqual(input.dtype, torch.float32)
+            return original_linear(input, weight, bias)
+
+        with patch("torch.nn.functional.linear", checked_linear):
+            output = head(x, adjacency)
+
+        self.assertEqual(output.shape, (3, 5, 4))
+        self.assertEqual(output.dtype, torch.float16)
+
     def test_stgat_forward_shape_and_adaptive_adjacency_registration(self):
         model = STGAT(
             num_nodes=5,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from contextlib import nullcontext
 from collections.abc import Sequence
 
 import torch
@@ -74,19 +75,28 @@ class GraphAttentionHead(nn.Module):
 
     def forward(self, x: torch.Tensor, adjacency: torch.Tensor) -> torch.Tensor:
         x = x.contiguous()
-        h = self.proj(x).contiguous()
-        src_scores = self.attn_src(h).float()
-        dst_scores = self.attn_dst(h).transpose(1, 2).contiguous().float()
-        scores = self.leaky_relu(src_scores + dst_scores)
-        edge_weights = adjacency.to(device=x.device, dtype=torch.float32).contiguous()
-        if edge_weights.dim() != 2 or edge_weights.shape[0] != x.shape[1] or edge_weights.shape[1] != x.shape[1]:
-            raise ValueError(f"adjacency shape {tuple(edge_weights.shape)} does not match node count {x.shape[1]}")
-        mask = edge_weights > 0
-        scores = scores + torch.log(edge_weights.clamp_min(1e-6)).unsqueeze(0)
-        scores = scores.masked_fill(~mask.unsqueeze(0), torch.finfo(scores.dtype).min)
-        attention = self.dropout(torch.softmax(scores, dim=-1)).contiguous()
-        attended = torch.bmm(attention, h.float()).to(dtype=h.dtype)
-        return attended + self.bias + self.residual(x)
+        autocast_context = torch.amp.autocast("cuda", enabled=False) if x.device.type == "cuda" else nullcontext()
+        with autocast_context:
+            x_float = x.float().contiguous()
+            h = F.linear(x_float, self.proj.weight.float()).contiguous()
+            src_scores = F.linear(h, self.attn_src.weight.float())
+            dst_scores = F.linear(h, self.attn_dst.weight.float()).transpose(1, 2).contiguous()
+            scores = self.leaky_relu(src_scores + dst_scores).contiguous()
+            edge_weights = adjacency.to(device=x.device, dtype=torch.float32).contiguous().clone()
+            if edge_weights.dim() != 2 or edge_weights.shape[0] != x.shape[1] or edge_weights.shape[1] != x.shape[1]:
+                raise ValueError(f"adjacency shape {tuple(edge_weights.shape)} does not match node count {x.shape[1]}")
+            mask = edge_weights > 0
+            log_edge_weights = torch.log(edge_weights.clamp_min(1e-6)).unsqueeze(0).contiguous()
+            scores = (scores + log_edge_weights).contiguous()
+            scores = scores.masked_fill(~mask.unsqueeze(0), torch.finfo(scores.dtype).min)
+            attention = self.dropout(torch.softmax(scores, dim=-1)).contiguous()
+            attended = torch.bmm(attention, h)
+            if isinstance(self.residual, nn.Linear):
+                residual = F.linear(x_float, self.residual.weight.float(), self.residual.bias.float())
+            else:
+                residual = x_float
+            output = attended + self.bias.float() + residual
+        return output.to(dtype=x.dtype)
 
 
 class GraphAttentionLayer(nn.Module):
