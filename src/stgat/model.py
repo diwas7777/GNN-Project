@@ -216,6 +216,12 @@ class GatedFusion(nn.Module):
         self.gate = nn.Linear(channels, channels)
         self.physical_proj = nn.Linear(channels, channels)
         self.adaptive_proj = nn.Linear(channels, channels)
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        for module in (self.gate, self.physical_proj, self.adaptive_proj):
+            nn.init.xavier_uniform_(module.weight, gain=math.sqrt(2.0))
+            nn.init.constant_(module.bias, 0.1)
 
     def forward(self, physical: torch.Tensor, adaptive: torch.Tensor) -> torch.Tensor:
         gate = torch.sigmoid(self.gate(physical + adaptive))

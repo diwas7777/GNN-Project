@@ -153,6 +153,7 @@ def make_dataloaders(
     arrays: Mapping[str, np.ndarray | StandardScaler],
     batch_size: int,
     num_workers: int = 0,
+    pin_memory: bool = False,
 ) -> dict[str, DataLoader]:
     scaler = arrays.get("scaler")
     loaders = {
@@ -161,12 +162,14 @@ def make_dataloaders(
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers,
+            pin_memory=pin_memory,
         ),
         "val": DataLoader(
             TrafficDataset(arrays["val_x"], arrays["val_y"], scaler=scaler),
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
+            pin_memory=pin_memory,
         ),
     }
     if "test_x" in arrays and "test_y" in arrays:
@@ -175,5 +178,6 @@ def make_dataloaders(
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
+            pin_memory=pin_memory,
         )
     return loaders

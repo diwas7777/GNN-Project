@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import torch
 from tqdm import tqdm
@@ -14,9 +15,40 @@ from .model import STGATWithAdjacency
 
 logger = logging.getLogger(__name__)
 
+AmpDtype = Literal["float16", "bfloat16"]
+
 
 def should_use_amp(model: torch.nn.Module, device: torch.device, requested: bool) -> bool:
     return requested and device.type == "cuda" and not isinstance(model, torch.nn.DataParallel)
+
+
+def _check_gradients(model: torch.nn.Module, grad_clip: float | None) -> None:
+    """Check for NaN/Inf gradients and log gradient norm statistics.
+
+    Logs a warning with the parameter name if any gradient is non-finite,
+    and reports the fraction of parameters with extreme gradient norms.
+    """
+    total_norm_sq = 0.0
+    non_finite_params: list[str] = []
+    for name, param in model.named_parameters():
+        if param.grad is not None:
+            if not torch.isfinite(param.grad).all():
+                non_finite_params.append(name)
+            total_norm_sq += param.grad.data.norm(2).item() ** 2
+    total_norm = math.sqrt(total_norm_sq)
+
+    if non_finite_params:
+        logger.warning(
+            "Non-finite gradients detected in %d/%d parameters (first: %s). "
+            "Gradient clipping will NOT fix this — check for NaN inputs, "
+            "exploding activations, or reduce learning rate.",
+            len(non_finite_params),
+            sum(1 for p in model.parameters() if p.requires_grad),
+            non_finite_params[0] if non_finite_params else "?",
+        )
+
+    clip_msg = f" (clipped to {grad_clip})" if grad_clip is not None else ""
+    logger.debug("Gradient L2 norm: %.4f%s", total_norm, clip_msg)
 
 
 def inverse_speed(tensor: torch.Tensor, scaler: StandardScaler) -> torch.Tensor:
@@ -47,6 +79,7 @@ def train_one_epoch(
     null_value: float = 0.0,
     grad_clip: float | None = 5.0,
     use_amp: bool = False,
+    amp_dtype: AmpDtype = "float16",
     accumulation_steps: int = 1,
     epoch: int | None = None,
     total_epochs: int | None = None,
@@ -54,8 +87,10 @@ def train_one_epoch(
     model.train()
     adjacency = adjacency.to(device) if adjacency is not None else None
     use_amp = should_use_amp(model, device, use_amp)
+    amp_device = "cuda" if device.type == "cuda" else "cpu"
+    autocast_dtype = torch.bfloat16 if amp_dtype == "bfloat16" else torch.float16
     losses: list[float] = []
-    scaler_amp = torch.amp.GradScaler("cuda", enabled=use_amp and device.type == "cuda")
+    scaler_amp = torch.amp.GradScaler(amp_device, enabled=use_amp and device.type == "cuda")
     optimizer.zero_grad(set_to_none=True)
 
     desc = "Training"
@@ -68,7 +103,7 @@ def train_one_epoch(
     for step, (x, y) in enumerate(progress, start=1):
         x = x.to(device)
         y = y.to(device)
-        with torch.amp.autocast("cuda", enabled=use_amp and device.type == "cuda"):
+        with torch.amp.autocast(amp_device, enabled=use_amp and device.type == "cuda", dtype=autocast_dtype):
             pred = _forward(model, x, adjacency)
             pred_speed = inverse_speed(pred[..., 0], scaler)
             y_speed = inverse_speed(y[..., 0], scaler)
@@ -79,6 +114,7 @@ def train_one_epoch(
             if grad_clip is not None:
                 scaler_amp.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                _check_gradients(model, grad_clip)
             scaler_amp.step(optimizer)
             scaler_amp.update()
             optimizer.zero_grad(set_to_none=True)
@@ -89,6 +125,7 @@ def train_one_epoch(
         if grad_clip is not None:
             scaler_amp.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            _check_gradients(model, grad_clip)
         scaler_amp.step(optimizer)
         scaler_amp.update()
     return sum(losses) / max(len(losses), 1)
@@ -103,18 +140,21 @@ def evaluate(
     device: torch.device,
     null_value: float = 0.0,
     use_amp: bool = False,
+    amp_dtype: AmpDtype = "float16",
     desc: str = "Validating",
 ) -> dict[str, Any]:
     model.eval()
     adjacency = adjacency.to(device) if adjacency is not None else None
     use_amp = should_use_amp(model, device, use_amp)
+    amp_device = "cuda" if device.type == "cuda" else "cpu"
+    autocast_dtype = torch.bfloat16 if amp_dtype == "bfloat16" else torch.float16
     predictions = []
     labels = []
     progress = tqdm(dataloader, desc=desc, unit="batch", leave=False, dynamic_ncols=True)
     for x, y in progress:
         x = x.to(device)
         y = y.to(device)
-        with torch.amp.autocast("cuda", enabled=use_amp and device.type == "cuda"):
+        with torch.amp.autocast(amp_device, enabled=use_amp and device.type == "cuda", dtype=autocast_dtype):
             pred_batch = _forward(model, x, adjacency)
         predictions.append(inverse_speed(pred_batch[..., 0], scaler).detach().cpu())
         labels.append(inverse_speed(y[..., 0], scaler).detach().cpu())

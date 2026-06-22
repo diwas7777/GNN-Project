@@ -31,23 +31,28 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    training = config["training"]
-    data_config = config["data"]
-    model_config = config["model"]
-    device = torch.device("cuda" if training.get("cuda", False) and torch.cuda.is_available() else "cpu")
+    training = config.training
+    data_config = config.data
+    model_config = config.model
+    device = torch.device("cuda" if training.cuda and torch.cuda.is_available() else "cpu")
 
-    arrays = load_split_arrays(project_path(data_config["data_dir"]))
-    dataloaders = make_dataloaders(arrays, batch_size=training["batch_size"], num_workers=training.get("num_workers", 0))
-    adjacency = load_adjacency(project_path(data_config["adjacency_path"]), data_config.get("adjacency_type", "raw"))
+    arrays = load_split_arrays(project_path(data_config.data_dir))
+    dataloaders = make_dataloaders(
+        arrays,
+        batch_size=training.batch_size,
+        num_workers=training.num_workers,
+        pin_memory=(device.type == "cuda"),
+    )
+    adjacency = load_adjacency(project_path(data_config.adjacency_path), data_config.adjacency_type)
     model = STGAT(
-        num_nodes=model_config["num_nodes"],
-        input_features=model_config["input_features"],
-        input_steps=model_config["input_steps"],
-        output_steps=model_config["output_steps"],
-        hidden_channels=model_config["hidden_channels"],
-        attention_heads=tuple(model_config["attention_heads"]),
-        blocks=model_config["blocks"],
-        dropout=model_config["dropout"],
+        num_nodes=model_config.num_nodes,
+        input_features=model_config.input_features,
+        input_steps=model_config.input_steps,
+        output_steps=model_config.output_steps,
+        hidden_channels=model_config.hidden_channels,
+        attention_heads=tuple(model_config.attention_heads),
+        blocks=model_config.blocks,
+        dropout=model_config.dropout,
     ).to(device)
     checkpoint = load_checkpoint(project_path(args.checkpoint), model, device)
     metrics = evaluate(
@@ -56,7 +61,8 @@ def main() -> None:
         adjacency,
         arrays["scaler"],
         device,
-        null_value=training.get("null_value", 0.0),
+        null_value=training.null_value,
+        amp_dtype=training.amp_dtype,
     )
 
     print(f"loaded epoch={checkpoint.get('epoch')} best_val_mae={checkpoint.get('best_val_mae')}")

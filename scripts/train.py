@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import csv
 import logging
 import random
+import signal
 import time
 import typing
 from datetime import timedelta
@@ -120,15 +122,65 @@ def _set_seed(seed: int) -> None:
     logger.info("Random seed set to %d (deterministic cuDNN)", seed)
 
 
+# ---------------------------------------------------------------------------
+# Graceful shutdown: save an emergency checkpoint on SIGINT / SIGTERM
+# ---------------------------------------------------------------------------
+_shutdown_state: dict = {
+    "model": None,
+    "optimizer": None,
+    "epoch": 0,
+    "config_dict": None,
+    "best_val_mae": float("inf"),
+    "checkpoint_path": None,
+}
+
+
+def _emergency_save() -> None:
+    """Save an emergency checkpoint if a model and path are registered."""
+    model = _shutdown_state["model"]
+    path = _shutdown_state["checkpoint_path"]
+    if model is None or path is None:
+        return
+    emergency_path = Path(path).with_suffix(".emergency.pt")
+    try:
+        from stgat.engine import save_checkpoint
+
+        save_checkpoint(
+            emergency_path,
+            model,
+            _shutdown_state["optimizer"],
+            _shutdown_state["epoch"],
+            _shutdown_state["config_dict"],
+            _shutdown_state["best_val_mae"],
+        )
+        logger.info("Emergency checkpoint saved to %s", emergency_path)
+    except Exception as exc:
+        logger.error("Failed to save emergency checkpoint: %s", exc)
+
+
+def _signal_handler(signum: int, frame: object) -> None:  # noqa: ARG001
+    sig_name = signal.Signals(signum).name
+    logger.warning("Received %s — saving emergency checkpoint before exit", sig_name)
+    _emergency_save()
+    sys.exit(128 + signum)
+
+
+def _register_shutdown_handlers() -> None:
+    """Register SIGINT/SIGTERM handlers and atexit fallback."""
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+    atexit.register(_emergency_save)
+
+
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    training = config["training"]
-    data_config = config["data"]
-    model_config = config["model"]
+    training = config.training
+    data_config = config.data
+    model_config = config.model
 
     # --- Logging setup ---
-    checkpoint_dir = project_path(training["checkpoint_path"]).parent
+    checkpoint_dir = project_path(training.checkpoint_path).parent
     run_name = project_path(args.config).stem  # e.g., "metr_la" or "pems_bay"
     _setup_logging(checkpoint_dir, run_name)
     csv_path, csv_writer, csv_handle = _setup_csv_logger(
@@ -138,40 +190,53 @@ def main() -> None:
     )
 
     # --- Seed ---
-    seed = args.seed if args.seed is not None else training.get("seed", None)
+    seed = args.seed if args.seed is not None else training.seed
     if seed is not None:
         _set_seed(seed)
     else:
         logger.info("No random seed set (use --seed or training.seed for reproducibility)")
 
     # --- Device ---
-    device = torch.device("cuda" if training.get("cuda", False) and torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if training.cuda and torch.cuda.is_available() else "cpu")
     logger.info("Using device: %s", device)
 
     # --- Data ---
-    arrays = load_raw_split_arrays(project_path(data_config["data_dir"]), include_test=False)
-    dataloaders = make_dataloaders(arrays, batch_size=training["batch_size"], num_workers=training.get("num_workers", 0))
+    arrays = load_raw_split_arrays(project_path(data_config.data_dir), include_test=False)
+    dataloaders = make_dataloaders(
+        arrays,
+        batch_size=training.batch_size,
+        num_workers=training.num_workers,
+        pin_memory=(device.type == "cuda"),
+    )
     train_loader = maybe_limit(dataloaders["train"], args.limit_batches)
     val_loader = maybe_limit(dataloaders["val"], args.limit_batches)
 
     # --- Graph ---
-    adjacency = load_adjacency(project_path(data_config["adjacency_path"]), data_config.get("adjacency_type", "raw"))
+    adjacency = load_adjacency(project_path(data_config.adjacency_path), data_config.adjacency_type)
 
     # --- Model ---
     model = STGAT(
-        num_nodes=model_config["num_nodes"],
-        input_features=model_config["input_features"],
-        input_steps=model_config["input_steps"],
-        output_steps=model_config["output_steps"],
-        hidden_channels=model_config["hidden_channels"],
-        attention_heads=tuple(model_config["attention_heads"]),
-        blocks=model_config["blocks"],
-        dropout=model_config["dropout"],
+        num_nodes=model_config.num_nodes,
+        input_features=model_config.input_features,
+        input_steps=model_config.input_steps,
+        output_steps=model_config.output_steps,
+        hidden_channels=model_config.hidden_channels,
+        attention_heads=tuple(model_config.attention_heads),
+        blocks=model_config.blocks,
+        dropout=model_config.dropout,
     ).to(device)
 
+    # --- torch.compile (PyTorch 2.0+) ---
+    if training.compile_model:
+        if hasattr(torch, "compile"):
+            logger.info("Enabling torch.compile for model acceleration")
+            model = torch.compile(model)  # type: ignore[attr-defined]
+        else:
+            logger.warning("torch.compile requested but not available (requires PyTorch 2.0+)")
+
     adjacency_for_engine = adjacency
-    requested_amp = training.get("amp", True)
-    if device.type == "cuda" and training.get("multi_gpu", False) and torch.cuda.device_count() > 1:
+    requested_amp = training.amp
+    if device.type == "cuda" and training.multi_gpu and torch.cuda.device_count() > 1:
         model = torch.nn.DataParallel(STGATWithAdjacency(model, adjacency.to(device)))
         adjacency_for_engine = None
         logger.info("Using %d GPUs with DataParallel", torch.cuda.device_count())
@@ -181,47 +246,46 @@ def main() -> None:
     else:
         use_amp = should_use_amp(model, device, requested_amp)
     if use_amp:
-        logger.info("Using CUDA automatic mixed precision")
+        dtype_label = "bfloat16" if training.amp_dtype == "bfloat16" else "float16"
+        logger.info("Using CUDA automatic mixed precision (%s)", dtype_label)
 
     # --- Optimizer ---
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=training["learning_rate"],
-        weight_decay=training.get("weight_decay", 0.0),
+        lr=training.learning_rate,
+        weight_decay=training.weight_decay,
     )
 
     # --- LR Scheduler ---
-    scheduler_config = training.get("scheduler", {})
     scheduler = None
-    if scheduler_config:
-        scheduler_type = scheduler_config.get("type", "plateau")
-        if scheduler_type == "plateau":
+    if training.scheduler is not None:
+        sched_cfg = training.scheduler
+        if sched_cfg.type == "plateau":
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
                 mode="min",
-                factor=scheduler_config.get("factor", 0.5),
-                patience=scheduler_config.get("patience", 10),
-                min_lr=scheduler_config.get("min_lr", 1e-6),
+                factor=sched_cfg.factor,
+                patience=sched_cfg.patience,
+                min_lr=sched_cfg.min_lr,
             )
             logger.info("Using ReduceLROnPlateau scheduler (factor=%.2f, patience=%d)",
-                        scheduler_config.get("factor", 0.5), scheduler_config.get("patience", 10))
-        elif scheduler_type == "cosine":
+                        sched_cfg.factor, sched_cfg.patience)
+        elif sched_cfg.type == "cosine":
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
-                T_max=training.get("epochs", 100),
-                eta_min=scheduler_config.get("min_lr", 1e-6),
+                T_max=training.epochs,
+                eta_min=sched_cfg.min_lr,
             )
-            logger.info("Using CosineAnnealingLR scheduler (eta_min=%.1e)", scheduler_config.get("min_lr", 1e-6))
+            logger.info("Using CosineAnnealingLR scheduler (eta_min=%.1e)", sched_cfg.min_lr)
 
     # --- Checkpoint & Resume ---
     start_epoch = 1
     best_val_mae = float("inf")
-    checkpoint_path = project_path(training["checkpoint_path"])
-    early_stopping_config = training.get("early_stopping", {})
+    checkpoint_path = project_path(training.checkpoint_path)
     patience_counter = 0
-    early_stop_patience = early_stopping_config.get("patience", 0)
-    early_stop_min_delta = early_stopping_config.get("min_delta", 0.0)
-    periodic_checkpoint_epochs = training.get("checkpoint_every", 0)  # 0 = disabled
+    early_stop_patience = training.early_stopping.patience
+    early_stop_min_delta = training.early_stopping.min_delta
+    periodic_checkpoint_epochs = training.checkpoint_every
 
     if args.resume:
         logger.info("Resuming from checkpoint: %s", args.resume)
@@ -235,15 +299,30 @@ def main() -> None:
                 logger.warning("Could not restore optimizer state; starting fresh optimizer")
 
     # --- Training ---
-    epochs = args.epochs if args.epochs is not None else training["epochs"]
+    epochs = args.epochs if args.epochs is not None else training.epochs
     logger.info("Starting training: %d epochs, batch_size=%d, accumulation_steps=%d, lr=%.1e",
-                epochs, training["batch_size"], training.get("accumulation_steps", 1), training["learning_rate"])
+                epochs, training.batch_size, training.accumulation_steps, training.learning_rate)
     logger.info("Checkpoint dir: %s  |  CSV log: %s", checkpoint_dir, csv_path)
+
+    # --- Graceful shutdown setup ---
+    _shutdown_state["checkpoint_path"] = checkpoint_path
+    _shutdown_state["config_dict"] = config.to_dict()
+    _register_shutdown_handlers()
+
     total_start = time.perf_counter()
 
     epoch_pbar = tqdm(range(start_epoch, epochs + 1), desc="Epochs", unit="epoch", dynamic_ncols=True)
     for epoch in epoch_pbar:
+        # Keep emergency-save state current so Ctrl+C saves the latest progress
+        _shutdown_state["model"] = model
+        _shutdown_state["optimizer"] = optimizer
+        _shutdown_state["epoch"] = epoch
+        _shutdown_state["best_val_mae"] = best_val_mae
+
         epoch_start = time.perf_counter()
+
+        # --- Validation frequency: skip validation on non-validation epochs ---
+        do_validation = epoch % training.val_every_n_epochs == 0
 
         train_mae = train_one_epoch(
             model,
@@ -252,24 +331,29 @@ def main() -> None:
             optimizer,
             arrays["scaler"],
             device,
-            null_value=training.get("null_value", 0.0),
-            grad_clip=training.get("grad_clip", 5.0),
+            null_value=training.null_value,
+            grad_clip=training.grad_clip,
             use_amp=use_amp,
-            accumulation_steps=training.get("accumulation_steps", 1),
+            amp_dtype=training.amp_dtype,
+            accumulation_steps=training.accumulation_steps,
             epoch=epoch,
             total_epochs=epochs,
         )
 
-        val_metrics = evaluate(
-            model,
-            val_loader,
-            adjacency_for_engine,
-            arrays["scaler"],
-            device,
-            null_value=training.get("null_value", 0.0),
-            use_amp=use_amp,
-            desc=f"Validation epoch {epoch}",
-        )
+        if do_validation:
+            val_metrics = evaluate(
+                model,
+                val_loader,
+                adjacency_for_engine,
+                arrays["scaler"],
+                device,
+                null_value=training.null_value,
+                use_amp=use_amp,
+                amp_dtype=training.amp_dtype,
+                desc=f"Validation epoch {epoch}",
+            )
+        else:
+            val_metrics = {"average": {"mae": float("nan"), "mape": float("nan"), "rmse": float("nan")}}
 
         epoch_time = time.perf_counter() - epoch_start
         val_mae = val_metrics["average"]["mae"]
@@ -308,12 +392,12 @@ def main() -> None:
 
         # --- Checkpointing ---
         if is_best:
-            save_checkpoint(checkpoint_path, model, optimizer, epoch, config, best_val_mae)
+            save_checkpoint(checkpoint_path, model, optimizer, epoch, config.to_dict(), best_val_mae)
             logger.info("  ✓ Best model saved (val_mae=%.4f) → %s", val_mae, checkpoint_path)
 
         if periodic_checkpoint_epochs > 0 and epoch % periodic_checkpoint_epochs == 0 and not is_best:
             periodic_path = checkpoint_path.with_suffix(f".epoch{epoch}.pt")
-            save_checkpoint(periodic_path, model, optimizer, epoch, config, best_val_mae)
+            save_checkpoint(periodic_path, model, optimizer, epoch, config.to_dict(), best_val_mae)
 
         # --- Scheduler step ---
         if scheduler is not None:
@@ -332,7 +416,7 @@ def main() -> None:
         # --- Update progress bar ---
         epoch_pbar.set_postfix(
             train_mae=f"{train_mae:.4f}",
-            val_mae=f"{val_mae:.4f}",
+            val_mae=f"{val_mae:.4f}" if do_validation else "skip",
             best=f"{best_val_mae:.4f}",
             patience=f"{patience_counter}/{early_stop_patience}" if early_stop_patience > 0 else "-",
         )
