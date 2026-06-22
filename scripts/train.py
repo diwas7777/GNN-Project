@@ -13,7 +13,7 @@ from stgat.config import load_config
 from stgat.data import load_raw_split_arrays, make_dataloaders
 from stgat.engine import evaluate, save_checkpoint, train_one_epoch
 from stgat.graph import load_adjacency
-from stgat.model import STGAT
+from stgat.model import STGAT, STGATWithAdjacency
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,6 +59,13 @@ def main() -> None:
         blocks=model_config["blocks"],
         dropout=model_config["dropout"],
     ).to(device)
+    adjacency_for_engine = adjacency
+    if device.type == "cuda" and training.get("multi_gpu", False) and torch.cuda.device_count() > 1:
+        model = torch.nn.DataParallel(STGATWithAdjacency(model, adjacency.to(device)))
+        adjacency_for_engine = None
+        print(f"Using {torch.cuda.device_count()} GPUs with DataParallel")
+    else:
+        print(f"Using device: {device}")
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=training["learning_rate"],
@@ -72,7 +79,7 @@ def main() -> None:
         train_mae = train_one_epoch(
             model,
             train_loader,
-            adjacency,
+            adjacency_for_engine,
             optimizer,
             arrays["scaler"],
             device,
@@ -82,7 +89,7 @@ def main() -> None:
         val_metrics = evaluate(
             model,
             val_loader,
-            adjacency,
+            adjacency_for_engine,
             arrays["scaler"],
             device,
             null_value=training.get("null_value", 0.0),

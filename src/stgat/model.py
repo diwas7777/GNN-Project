@@ -262,3 +262,15 @@ class STGAT(nn.Module):
         node_embeddings = fused.permute(0, 2, 1, 3).reshape(x.shape[0], self.num_nodes, -1)
         prediction = self.head(node_embeddings)
         return prediction.permute(0, 2, 1).unsqueeze(-1).contiguous()
+
+
+class STGATWithAdjacency(nn.Module):
+    """Bind a fixed physical adjacency so DataParallel only scatters batches."""
+
+    def __init__(self, model: STGAT, physical_adjacency: torch.Tensor):
+        super().__init__()
+        self.model = model
+        self.register_buffer("physical_adjacency", physical_adjacency)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.model(x, self.physical_adjacency)

@@ -2,7 +2,8 @@ import unittest
 
 import torch
 
-from stgat.model import GatedFusion, STGAT
+from stgat.engine import save_checkpoint
+from stgat.model import GatedFusion, STGAT, STGATWithAdjacency
 
 
 class ModelTest(unittest.TestCase):
@@ -62,6 +63,31 @@ class ModelTest(unittest.TestCase):
 
         self.assertEqual(fused.shape, physical.shape)
         self.assertTrue(any(parameter.requires_grad for parameter in fusion.parameters()))
+
+    def test_adjacency_bound_model_saves_base_model_state(self):
+        import tempfile
+        from pathlib import Path
+
+        model = STGAT(
+            num_nodes=4,
+            input_features=2,
+            input_steps=12,
+            output_steps=12,
+            hidden_channels=6,
+            attention_heads=(2, 2),
+            blocks=2,
+            dropout=0.0,
+        )
+        wrapped = STGATWithAdjacency(model, torch.eye(4))
+        optimizer = torch.optim.Adam(wrapped.parameters(), lr=1e-3)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "checkpoint.pt"
+            save_checkpoint(path, wrapped, optimizer, epoch=1, config={}, best_val_mae=1.0)
+            checkpoint = torch.load(path, map_location="cpu")
+
+        self.assertIn("adaptive_adjacency", checkpoint["model_state_dict"])
+        self.assertFalse(any(key.startswith("model.") for key in checkpoint["model_state_dict"]))
 
 
 if __name__ == "__main__":

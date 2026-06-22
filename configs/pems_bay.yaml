@@ -14,12 +14,13 @@ model:
   dropout: 0.6
 
 training:
-  batch_size: 64
+  batch_size: 16
   epochs: 100
   learning_rate: 0.0003
   weight_decay: 0.0
   grad_clip: 5.0
   null_value: 0.0
   cuda: true
+  multi_gpu: true
   num_workers: 0
   checkpoint_path: checkpoints/pems_bay_best.pt

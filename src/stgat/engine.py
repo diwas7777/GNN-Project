@@ -7,16 +7,31 @@ import torch
 
 from .data import StandardScaler
 from .metrics import masked_mae, metric_tuple
+from .model import STGATWithAdjacency
 
 
 def inverse_speed(tensor: torch.Tensor, scaler: StandardScaler) -> torch.Tensor:
     return tensor * float(scaler.std) + float(scaler.mean)
 
 
+def _forward(model: torch.nn.Module, x: torch.Tensor, adjacency: torch.Tensor | None) -> torch.Tensor:
+    if adjacency is None:
+        return model(x)
+    return model(x, adjacency)
+
+
+def _checkpoint_model(model: torch.nn.Module) -> torch.nn.Module:
+    if isinstance(model, torch.nn.DataParallel):
+        model = model.module
+    if isinstance(model, STGATWithAdjacency):
+        return model.model
+    return model
+
+
 def train_one_epoch(
     model: torch.nn.Module,
     dataloader,
-    adjacency: torch.Tensor,
+    adjacency: torch.Tensor | None,
     optimizer: torch.optim.Optimizer,
     scaler: StandardScaler,
     device: torch.device,
@@ -24,13 +39,13 @@ def train_one_epoch(
     grad_clip: float | None = 5.0,
 ) -> float:
     model.train()
-    adjacency = adjacency.to(device)
+    adjacency = adjacency.to(device) if adjacency is not None else None
     losses: list[float] = []
     for x, y in dataloader:
         x = x.to(device)
         y = y.to(device)
         optimizer.zero_grad()
-        pred = model(x, adjacency)
+        pred = _forward(model, x, adjacency)
         pred_speed = inverse_speed(pred[..., 0], scaler)
         y_speed = inverse_speed(y[..., 0], scaler)
         loss = masked_mae(pred_speed, y_speed, null_value)
@@ -46,19 +61,19 @@ def train_one_epoch(
 def evaluate(
     model: torch.nn.Module,
     dataloader,
-    adjacency: torch.Tensor,
+    adjacency: torch.Tensor | None,
     scaler: StandardScaler,
     device: torch.device,
     null_value: float = 0.0,
 ) -> dict[str, Any]:
     model.eval()
-    adjacency = adjacency.to(device)
+    adjacency = adjacency.to(device) if adjacency is not None else None
     predictions = []
     labels = []
     for x, y in dataloader:
         x = x.to(device)
         y = y.to(device)
-        predictions.append(inverse_speed(model(x, adjacency)[..., 0], scaler).detach().cpu())
+        predictions.append(inverse_speed(_forward(model, x, adjacency)[..., 0], scaler).detach().cpu())
         labels.append(inverse_speed(y[..., 0], scaler).detach().cpu())
     pred = torch.cat(predictions, dim=0)
     true = torch.cat(labels, dim=0)
@@ -82,7 +97,7 @@ def save_checkpoint(
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "model_state_dict": model.state_dict(),
+            "model_state_dict": _checkpoint_model(model).state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "epoch": epoch,
             "config": config,
