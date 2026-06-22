@@ -14,6 +14,17 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+
+class TqdmLoggingHandler(logging.Handler):
+    """Logging handler that routes messages through tqdm.write() so progress bars stay in place."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            tqdm.write(msg)
+        except Exception:
+            self.handleError(record)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
@@ -53,8 +64,8 @@ def _setup_logging(log_dir: Path, name: str) -> None:
     root_logger = logging.getLogger("stgat")
     root_logger.setLevel(logging.DEBUG)
 
-    # Console handler (INFO+)
-    console = logging.StreamHandler(sys.stdout)
+    # Console handler (INFO+) — uses tqdm.write() to avoid breaking progress bars
+    console = TqdmLoggingHandler()
     console.setLevel(logging.INFO)
     console.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-5s  %(message)s", datefmt="%H:%M:%S"))
     root_logger.addHandler(console)

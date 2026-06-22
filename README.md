@@ -80,31 +80,75 @@ training:
 
 ## Commands
 
-Use the existing Conda environment:
+### Local (Conda)
 
 ```bash
 # Run tests
-PYTHONPATH=GNN_Project/src conda run -n deeplearning python -m pytest GNN_Project/tests -v
-
-# Generate data
-PYTHONPATH=GNN_Project/src conda run -n deeplearning python GNN_Project/scripts/generate_data.py --traffic-df-filename GNN_Project/metr-la.h5 --output-dir GNN_Project/data/METR-LA
-PYTHONPATH=GNN_Project/src conda run -n deeplearning python GNN_Project/scripts/generate_data.py --traffic-df-filename GNN_Project/pems-bay.h5 --output-dir GNN_Project/data/PEMS-BAY
+PYTHONPATH=GNN_Project/src conda run -n tensor python -m pytest GNN_Project/tests -v
 
 # Train
-PYTHONPATH=GNN_Project/src conda run -n deeplearning python GNN_Project/scripts/train.py --config GNN_Project/configs/metr_la.yaml
+PYTHONPATH=GNN_Project/src conda run -n tensor python GNN_Project/scripts/train.py --config GNN_Project/configs/metr_la.yaml
 
 # Train with custom seed and epochs
-PYTHONPATH=GNN_Project/src conda run -n deeplearning python GNN_Project/scripts/train.py --config GNN_Project/configs/metr_la.yaml --seed 123 --epochs 50
+PYTHONPATH=GNN_Project/src conda run -n tensor python GNN_Project/scripts/train.py --config GNN_Project/configs/metr_la.yaml --seed 123 --epochs 50
 
 # Resume from checkpoint
-PYTHONPATH=GNN_Project/src conda run -n deeplearning python GNN_Project/scripts/train.py --config GNN_Project/configs/metr_la.yaml --resume GNN_Project/checkpoints/metr_la_best.pt
+PYTHONPATH=GNN_Project/src conda run -n tensor python GNN_Project/scripts/train.py --config GNN_Project/configs/metr_la.yaml --resume GNN_Project/checkpoints/metr_la_best.pt
 
 # Debug / smoke test (only 5 batches)
-PYTHONPATH=GNN_Project/src conda run -n deeplearning python GNN_Project/scripts/train.py --config GNN_Project/configs/metr_la.yaml --limit-batches 5 --epochs 2
+PYTHONPATH=GNN_Project/src conda run -n tensor python GNN_Project/scripts/train.py --config GNN_Project/configs/metr_la.yaml --limit-batches 5 --epochs 2
 
 # Evaluate
-PYTHONPATH=GNN_Project/src conda run -n deeplearning python GNN_Project/scripts/evaluate.py --config GNN_Project/configs/metr_la.yaml --checkpoint GNN_Project/checkpoints/metr_la_best.pt
+PYTHONPATH=GNN_Project/src conda run -n tensor python GNN_Project/scripts/evaluate.py --config GNN_Project/configs/metr_la.yaml --checkpoint GNN_Project/checkpoints/metr_la_best.pt
 ```
+
+### Kaggle Notebook
+
+Kaggle provides a single GPU (usually T4 or P100). The progress bar uses `tqdm.write()` for logging so it updates cleanly in Kaggle's notebook output.
+
+```python
+# Cell 1 — Install dependencies (run once)
+!pip install tqdm --quiet
+
+# Cell 2 — Setup paths (adjust if your dataset paths differ)
+import sys
+sys.path.insert(0, "/kaggle/working/GNN_Project/src")
+
+# Cell 3 — Train
+!python /kaggle/working/GNN_Project/scripts/train.py \
+    --config /kaggle/working/GNN_Project/configs/metr_la.yaml \
+    --seed 42
+
+# Cell 4 — Evaluate
+!python /kaggle/working/GNN_Project/scripts/evaluate.py \
+    --config /kaggle/working/GNN_Project/configs/metr_la.yaml \
+    --checkpoint /kaggle/working/GNN_Project/checkpoints/metr_la_best.pt
+```
+
+> **Note on data**: Upload `train.npz`, `val.npz`, `test.npz`, and `adj_mx_dijsk.pkl` as a Kaggle Dataset, or place them under `/kaggle/working/GNN_Project/data/METR-LA/` (or `PEMS-BAY/`).
+
+## Multi-GPU Training
+
+The code supports multi-GPU via `torch.nn.DataParallel`. To enable it:
+
+1. Set `multi_gpu: true` in your config YAML
+2. Multi-GPU automatically disables AMP (mixed precision) — they are incompatible under DataParallel
+3. The `STGATWithAdjacency` wrapper binds the adjacency matrix into the model so DataParallel only scatters batch data across GPUs (not the adjacency)
+
+```yaml
+# configs/metr_la.yaml  — change these lines:
+  cuda: true
+  multi_gpu: true       # ← enable multi-GPU
+  amp: false            # ← must stay false with DataParallel
+```
+
+When multi-GPU activates, you'll see:
+```
+11:23:45  INFO   Using 2 GPUs with DataParallel
+11:23:45  INFO   Disabling CUDA automatic mixed precision with DataParallel
+```
+
+> **Limitations**: `DataParallel` replicates the model on each GPU and scatters input batches. It does NOT distribute the model across GPUs (use `DistributedDataParallel` for that). For this model (~2M params), DataParallel is sufficient for 2–4 GPUs. When using accumulation steps, reduce them proportionally (e.g., 2 GPUs + accumulation=4 → effective batch = batch_size × 2 × 4 = 8×).
 
 ## Training Output
 
