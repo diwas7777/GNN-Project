@@ -16,6 +16,11 @@ from stgat.graph import load_adjacency
 from stgat.model import STGAT
 
 
+def project_path(path: str) -> Path:
+    candidate = Path(path)
+    return candidate if candidate.is_absolute() else PROJECT_ROOT / candidate
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate STGAT")
     parser.add_argument("--config", required=True, help="Path to YAML config")
@@ -31,9 +36,9 @@ def main() -> None:
     model_config = config["model"]
     device = torch.device("cuda" if training.get("cuda", False) and torch.cuda.is_available() else "cpu")
 
-    arrays = load_split_arrays(data_config["data_dir"])
+    arrays = load_split_arrays(project_path(data_config["data_dir"]))
     dataloaders = make_dataloaders(arrays, batch_size=training["batch_size"], num_workers=training.get("num_workers", 0))
-    adjacency = load_adjacency(data_config["adjacency_path"], data_config.get("adjacency_type", "raw"))
+    adjacency = load_adjacency(project_path(data_config["adjacency_path"]), data_config.get("adjacency_type", "raw"))
     model = STGAT(
         num_nodes=model_config["num_nodes"],
         input_features=model_config["input_features"],
@@ -44,7 +49,7 @@ def main() -> None:
         blocks=model_config["blocks"],
         dropout=model_config["dropout"],
     ).to(device)
-    checkpoint = load_checkpoint(args.checkpoint, model, device)
+    checkpoint = load_checkpoint(project_path(args.checkpoint), model, device)
     metrics = evaluate(
         model,
         dataloaders["test"],

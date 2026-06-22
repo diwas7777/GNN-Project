@@ -1,6 +1,6 @@
 data:
-  data_dir: GNN_Project/data/PEMS-BAY
-  adjacency_path: GNN_Project/data/PEMS-BAY/adj_mx_bay.pkl
+  data_dir: data/PEMS-BAY
+  adjacency_path: data/PEMS-BAY/adj_mx_bay.pkl
   adjacency_type: raw
 
 model:
@@ -22,4 +22,4 @@ training:
   null_value: 0.0
   cuda: true
   num_workers: 0
-  checkpoint_path: GNN_Project/checkpoints/pems_bay_best.pt
+  checkpoint_path: checkpoints/pems_bay_best.pt

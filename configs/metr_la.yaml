@@ -1,6 +1,6 @@
 data:
-  data_dir: GNN_Project/data/METR-LA
-  adjacency_path: GNN_Project/data/METR-LA/adj_mx_dijsk.pkl
+  data_dir: data/METR-LA
+  adjacency_path: data/METR-LA/adj_mx_dijsk.pkl
   adjacency_type: raw
 
 model:
@@ -22,4 +22,4 @@ training:
   null_value: 0.0
   cuda: true
   num_workers: 0
-  checkpoint_path: GNN_Project/checkpoints/metr_la_best.pt
+  checkpoint_path: checkpoints/metr_la_best.pt

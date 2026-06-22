@@ -30,6 +30,11 @@ def maybe_limit(loader, limit):
     return list(loader)[:limit]
 
 
+def project_path(path: str) -> Path:
+    candidate = Path(path)
+    return candidate if candidate.is_absolute() else PROJECT_ROOT / candidate
+
+
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
@@ -38,12 +43,12 @@ def main() -> None:
     model_config = config["model"]
 
     device = torch.device("cuda" if training.get("cuda", False) and torch.cuda.is_available() else "cpu")
-    arrays = load_split_arrays(data_config["data_dir"])
+    arrays = load_split_arrays(project_path(data_config["data_dir"]))
     dataloaders = make_dataloaders(arrays, batch_size=training["batch_size"], num_workers=training.get("num_workers", 0))
     train_loader = maybe_limit(dataloaders["train"], args.limit_batches)
     val_loader = maybe_limit(dataloaders["val"], args.limit_batches)
 
-    adjacency = load_adjacency(data_config["adjacency_path"], data_config.get("adjacency_type", "raw"))
+    adjacency = load_adjacency(project_path(data_config["adjacency_path"]), data_config.get("adjacency_type", "raw"))
     model = STGAT(
         num_nodes=model_config["num_nodes"],
         input_features=model_config["input_features"],
@@ -62,7 +67,7 @@ def main() -> None:
 
     epochs = args.epochs if args.epochs is not None else training["epochs"]
     best_val_mae = float("inf")
-    checkpoint_path = Path(training["checkpoint_path"])
+    checkpoint_path = project_path(training["checkpoint_path"])
     for epoch in range(1, epochs + 1):
         train_mae = train_one_epoch(
             model,
