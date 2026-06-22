@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 
 import torch
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from stgat.config import load_config
 from stgat.data import load_split_arrays, make_dataloaders
