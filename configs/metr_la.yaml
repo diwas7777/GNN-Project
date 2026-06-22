@@ -21,7 +21,7 @@ training:
   grad_clip: 5.0
   null_value: 0.0
   cuda: true
-  multi_gpu: false
+  multi_gpu: true
   amp: false
   accumulation_steps: 2
   num_workers: 0
