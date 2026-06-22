@@ -35,6 +35,18 @@ class DataMetricsGraphTest(unittest.TestCase):
         self.assertEqual(sample_x.dtype, torch.float32)
         self.assertEqual(sample_y.dtype, torch.float32)
 
+    def test_traffic_dataset_normalizes_speed_on_access(self):
+        x = np.array([[[[3.0, 0.25], [5.0, 0.5]]]], dtype=np.float32)
+        y = np.array([[[[7.0, 0.75], [9.0, 1.0]]]], dtype=np.float32)
+        scaler = StandardScaler(mean=np.float32(5.0), std=np.float32(2.0))
+
+        dataset = TrafficDataset(x, y, scaler=scaler)
+        sample_x, sample_y = dataset[0]
+
+        np.testing.assert_allclose(sample_x[..., 0].numpy(), np.array([[-1.0, 0.0]], dtype=np.float32))
+        np.testing.assert_allclose(sample_y[..., 0].numpy(), np.array([[1.0, 2.0]], dtype=np.float32))
+        np.testing.assert_allclose(sample_x[..., 1].numpy(), np.array([[0.25, 0.5]], dtype=np.float32))
+
     def test_masked_metrics_ignore_zero_labels(self):
         pred = torch.tensor([[2.0, 5.0, 10.0]])
         true = torch.tensor([[1.0, 0.0, 8.0]])

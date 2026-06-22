@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from stgat.config import load_config
-from stgat.data import load_split_arrays, make_dataloaders
+from stgat.data import load_raw_split_arrays, make_dataloaders
 from stgat.engine import evaluate, save_checkpoint, train_one_epoch
 from stgat.graph import load_adjacency
 from stgat.model import STGAT
@@ -43,7 +43,7 @@ def main() -> None:
     model_config = config["model"]
 
     device = torch.device("cuda" if training.get("cuda", False) and torch.cuda.is_available() else "cpu")
-    arrays = load_split_arrays(project_path(data_config["data_dir"]))
+    arrays = load_raw_split_arrays(project_path(data_config["data_dir"]), include_test=False)
     dataloaders = make_dataloaders(arrays, batch_size=training["batch_size"], num_workers=training.get("num_workers", 0))
     train_loader = maybe_limit(dataloaders["train"], args.limit_batches)
     val_loader = maybe_limit(dataloaders["val"], args.limit_batches)
