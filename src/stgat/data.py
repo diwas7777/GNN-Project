@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Mapping
 
 import numpy as np
 import torch
@@ -122,7 +122,9 @@ def load_split_arrays(data_dir: str | Path) -> dict[str, np.ndarray | StandardSc
     }
 
 
-def load_raw_split_arrays(data_dir: str | Path, include_test: bool = True) -> dict[str, np.ndarray | StandardScaler]:
+def load_raw_split_arrays(
+    data_dir: str | Path, include_test: bool = True
+) -> dict[str, np.ndarray | StandardScaler]:
     root = Path(data_dir)
     train_x, train_y = _load_npz(root / "train.npz")
     val_x, val_y = _load_npz(root / "val.npz")

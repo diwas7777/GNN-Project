@@ -4,7 +4,7 @@ from unittest.mock import patch
 import torch
 
 from stgat.engine import save_checkpoint
-from stgat.model import GatedFusion, GatedTemporalConv, GraphAttentionHead, STGAT, STGATWithAdjacency
+from stgat.model import STGAT, GatedFusion, GatedTemporalConv, GraphAttentionHead, STGATWithAdjacency
 
 
 class ModelTest(unittest.TestCase):

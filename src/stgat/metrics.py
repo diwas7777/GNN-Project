@@ -4,10 +4,8 @@ import torch
 
 
 def _masked_loss(loss: torch.Tensor, labels: torch.Tensor, null_value: float) -> torch.Tensor:
-    if null_value != null_value:
-        mask = ~torch.isnan(labels)
-    else:
-        mask = labels != null_value
+    # null_value != null_value is True only for NaN (standard NaN detection idiom)
+    mask = ~torch.isnan(labels) if null_value != null_value else labels != null_value
     mask = mask.to(dtype=loss.dtype)
     mask_mean = mask.mean()
     if torch.isclose(mask_mean, torch.zeros_like(mask_mean)):
@@ -34,7 +32,9 @@ def masked_mape(preds: torch.Tensor, labels: torch.Tensor, null_value: float = 0
     return _masked_loss(percentage, labels, null_value)
 
 
-def metric_tuple(preds: torch.Tensor, labels: torch.Tensor, null_value: float = 0.0) -> tuple[float, float, float]:
+def metric_tuple(
+    preds: torch.Tensor, labels: torch.Tensor, null_value: float = 0.0
+) -> tuple[float, float, float]:
     return (
         float(masked_mae(preds, labels, null_value).detach().cpu()),
         float(masked_mape(preds, labels, null_value).detach().cpu()),

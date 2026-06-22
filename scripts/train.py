@@ -6,11 +6,11 @@ import csv
 import logging
 import random
 import signal
+import sys
 import time
 import typing
 from datetime import timedelta
 from pathlib import Path
-import sys
 
 import numpy as np
 import torch
@@ -27,14 +27,21 @@ class TqdmLoggingHandler(logging.Handler):
         except Exception:
             self.handleError(record)
 
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from stgat.config import load_config
-from stgat.data import load_raw_split_arrays, make_dataloaders
-from stgat.engine import evaluate, load_checkpoint, save_checkpoint, should_use_amp, train_one_epoch
-from stgat.graph import load_adjacency
-from stgat.model import STGAT, STGATWithAdjacency
+from stgat.config import load_config  # noqa: E402
+from stgat.data import load_raw_split_arrays, make_dataloaders  # noqa: E402
+from stgat.engine import (  # noqa: E402
+    evaluate,
+    load_checkpoint,
+    save_checkpoint,
+    should_use_amp,
+    train_one_epoch,
+)
+from stgat.graph import load_adjacency  # noqa: E402
+from stgat.model import STGAT, STGATWithAdjacency  # noqa: E402
 
 logger = logging.getLogger("stgat.train")
 
@@ -79,10 +86,12 @@ def _setup_logging(log_dir: Path, name: str) -> None:
     root_logger.addHandler(file_handler)
 
 
-def _setup_csv_logger(log_dir: Path, name: str, fieldnames: list[str]) -> tuple[Path, csv.DictWriter, typing.TextIO]:
+def _setup_csv_logger(
+    log_dir: Path, name: str, fieldnames: list[str]
+) -> tuple[Path, csv.DictWriter, typing.TextIO]:
     log_dir.mkdir(parents=True, exist_ok=True)
     csv_path = log_dir / f"{name}.csv"
-    csv_file = open(csv_path, "w", newline="")
+    csv_file = open(csv_path, "w", newline="")  # noqa: SIM115 — kept open for per‑epoch writes
     writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
     writer.writeheader()
     csv_file.flush()
@@ -184,9 +193,19 @@ def main() -> None:
     run_name = project_path(args.config).stem  # e.g., "metr_la" or "pems_bay"
     _setup_logging(checkpoint_dir, run_name)
     csv_path, csv_writer, csv_handle = _setup_csv_logger(
-        checkpoint_dir, run_name,
-        fieldnames=["epoch", "train_mae", "val_mae", "val_mape", "val_rmse",
-                     "epoch_time_s", "lr", "gpu_memory_allocated_gb", "is_best"],
+        checkpoint_dir,
+        run_name,
+        fieldnames=[
+            "epoch",
+            "train_mae",
+            "val_mae",
+            "val_mape",
+            "val_rmse",
+            "epoch_time_s",
+            "lr",
+            "gpu_memory_allocated_gb",
+            "is_best",
+        ],
     )
 
     # --- Seed ---
@@ -268,8 +287,11 @@ def main() -> None:
                 patience=sched_cfg.patience,
                 min_lr=sched_cfg.min_lr,
             )
-            logger.info("Using ReduceLROnPlateau scheduler (factor=%.2f, patience=%d)",
-                        sched_cfg.factor, sched_cfg.patience)
+            logger.info(
+                "Using ReduceLROnPlateau scheduler (factor=%.2f, patience=%d)",
+                sched_cfg.factor,
+                sched_cfg.patience,
+            )
         elif sched_cfg.type == "cosine":
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
@@ -300,8 +322,13 @@ def main() -> None:
 
     # --- Training ---
     epochs = args.epochs if args.epochs is not None else training.epochs
-    logger.info("Starting training: %d epochs, batch_size=%d, accumulation_steps=%d, lr=%.1e",
-                epochs, training.batch_size, training.accumulation_steps, training.learning_rate)
+    logger.info(
+        "Starting training: %d epochs, batch_size=%d, accumulation_steps=%d, lr=%.1e",
+        epochs,
+        training.batch_size,
+        training.accumulation_steps,
+        training.learning_rate,
+    )
     logger.info("Checkpoint dir: %s  |  CSV log: %s", checkpoint_dir, csv_path)
 
     # --- Graceful shutdown setup ---
@@ -373,7 +400,14 @@ def main() -> None:
         epoch_time_str = _format_duration(epoch_time)
         logger.info(
             "epoch=%3d  train_mae=%.4f  val_mae=%.4f  val_mape=%.4f  val_rmse=%.4f  lr=%.1e  time=%s%s",
-            epoch, train_mae, val_mae, val_mape, val_rmse, current_lr, epoch_time_str, gpu_mem_str,
+            epoch,
+            train_mae,
+            val_mae,
+            val_mape,
+            val_rmse,
+            current_lr,
+            epoch_time_str,
+            gpu_mem_str,
         )
 
         # --- CSV ---
@@ -385,7 +419,9 @@ def main() -> None:
             "val_rmse": f"{val_rmse:.6f}",
             "epoch_time_s": f"{epoch_time:.1f}",
             "lr": f"{current_lr:.2e}",
-            "gpu_memory_allocated_gb": f"{torch.cuda.memory_allocated(device) / (1024**3):.2f}" if device.type == "cuda" else "0",
+            "gpu_memory_allocated_gb": f"{torch.cuda.memory_allocated(device) / (1024**3):.2f}"
+            if device.type == "cuda"
+            else "0",
             "is_best": "1" if is_best else "0",
         }
         _log_csv(csv_writer, csv_handle, csv_row)
@@ -408,8 +444,12 @@ def main() -> None:
 
         # --- Early stopping ---
         if early_stop_patience > 0 and patience_counter >= early_stop_patience:
-            logger.info("Early stopping triggered after %d epochs without improvement (patience=%d, min_delta=%.1e)",
-                        patience_counter, early_stop_patience, early_stop_min_delta)
+            logger.info(
+                "Early stopping triggered after %d epochs without improvement (patience=%d, min_delta=%.1e)",
+                patience_counter,
+                early_stop_patience,
+                early_stop_min_delta,
+            )
             epoch_pbar.close()
             break
 
@@ -423,8 +463,12 @@ def main() -> None:
 
     # --- Final summary ---
     total_time = time.perf_counter() - total_start
-    logger.info("Training complete. Total time: %s  |  Best val_mae: %.4f  |  Checkpoint: %s",
-                _format_duration(total_time), best_val_mae, checkpoint_path)
+    logger.info(
+        "Training complete. Total time: %s  |  Best val_mae: %.4f  |  Checkpoint: %s",
+        _format_duration(total_time),
+        best_val_mae,
+        checkpoint_path,
+    )
 
 
 if __name__ == "__main__":

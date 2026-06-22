@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import math
-from contextlib import nullcontext
 from collections.abc import Sequence
+from contextlib import nullcontext
 
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
 
 
 class GatedTemporalConv(nn.Module):
@@ -75,7 +75,9 @@ class GraphAttentionHead(nn.Module):
 
     def forward(self, x: torch.Tensor, adjacency: torch.Tensor) -> torch.Tensor:
         x = x.contiguous()
-        autocast_context = torch.amp.autocast("cuda", enabled=False) if x.device.type == "cuda" else nullcontext()
+        autocast_context = (
+            torch.amp.autocast("cuda", enabled=False) if x.device.type == "cuda" else nullcontext()
+        )
         with autocast_context:
             x_float = x.float().contiguous()
             h = F.linear(x_float, self.proj.weight.float()).contiguous()
@@ -83,8 +85,14 @@ class GraphAttentionHead(nn.Module):
             dst_scores = F.linear(h, self.attn_dst.weight.float()).transpose(1, 2).contiguous()
             scores = self.leaky_relu(src_scores + dst_scores).contiguous()
             edge_weights = adjacency.to(device=x.device, dtype=torch.float32).contiguous().clone()
-            if edge_weights.dim() != 2 or edge_weights.shape[0] != x.shape[1] or edge_weights.shape[1] != x.shape[1]:
-                raise ValueError(f"adjacency shape {tuple(edge_weights.shape)} does not match node count {x.shape[1]}")
+            if (
+                edge_weights.dim() != 2
+                or edge_weights.shape[0] != x.shape[1]
+                or edge_weights.shape[1] != x.shape[1]
+            ):
+                raise ValueError(
+                    f"adjacency shape {tuple(edge_weights.shape)} does not match node count {x.shape[1]}"
+                )
             mask = edge_weights > 0
             log_edge_weights = torch.log(edge_weights.clamp_min(1e-6)).unsqueeze(0).contiguous()
             scores = (scores + log_edge_weights).contiguous()
@@ -114,7 +122,10 @@ class GraphAttentionLayer(nn.Module):
         super().__init__()
         self.concat = concat
         self.attention_heads = nn.ModuleList(
-            [GraphAttentionHead(in_features, out_features, dropout=dropout, alpha=alpha) for _ in range(heads)]
+            [
+                GraphAttentionHead(in_features, out_features, dropout=dropout, alpha=alpha)
+                for _ in range(heads)
+            ]
         )
 
     @property
@@ -156,9 +167,13 @@ class STBlock(nn.Module):
         )
         attention_channels = self.attention.output_features
         self.channel_projection = (
-            nn.Linear(attention_channels, hidden_channels) if attention_channels != hidden_channels else nn.Identity()
+            nn.Linear(attention_channels, hidden_channels)
+            if attention_channels != hidden_channels
+            else nn.Identity()
         )
-        self.residual_projection = nn.Linear(channels, hidden_channels) if channels != hidden_channels else nn.Identity()
+        self.residual_projection = (
+            nn.Linear(channels, hidden_channels) if channels != hidden_channels else nn.Identity()
+        )
         self.norm = nn.BatchNorm2d(hidden_channels)
         self.dropout = nn.Dropout(dropout)
 

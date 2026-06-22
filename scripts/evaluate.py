@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import torch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from stgat.config import load_config
-from stgat.data import load_split_arrays, make_dataloaders
-from stgat.engine import evaluate, load_checkpoint
-from stgat.graph import load_adjacency
-from stgat.model import STGAT
+from stgat.config import load_config  # noqa: E402
+from stgat.data import load_split_arrays, make_dataloaders  # noqa: E402
+from stgat.engine import evaluate, load_checkpoint  # noqa: E402
+from stgat.graph import load_adjacency  # noqa: E402
+from stgat.model import STGAT  # noqa: E402
 
 
 def project_path(path: str) -> Path:
@@ -68,10 +68,7 @@ def main() -> None:
     print(f"loaded epoch={checkpoint.get('epoch')} best_val_mae={checkpoint.get('best_val_mae')}")
     for horizon in (3, 6, 12):
         item = metrics["horizons"][horizon - 1]
-        print(
-            f"horizon={horizon} mae={item['mae']:.4f} "
-            f"mape={item['mape']:.4f} rmse={item['rmse']:.4f}"
-        )
+        print(f"horizon={horizon} mae={item['mae']:.4f} mape={item['mape']:.4f} rmse={item['rmse']:.4f}")
     avg = metrics["average"]
     print(f"average mae={avg['mae']:.4f} mape={avg['mape']:.4f} rmse={avg['rmse']:.4f}")
 

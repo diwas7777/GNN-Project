@@ -5,7 +5,6 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-
 X_OFFSETS = np.arange(-11, 1, dtype=np.int64).reshape(-1, 1)
 Y_OFFSETS = np.arange(1, 13, dtype=np.int64).reshape(-1, 1)
 
@@ -78,6 +77,8 @@ def generate_splits(h5_path: str | Path, output_dir: str | Path) -> dict[str, tu
     output.mkdir(parents=True, exist_ok=True)
     shapes = {}
     for name, (split_x, split_y) in splits.items():
-        np.savez_compressed(output / f"{name}.npz", x=split_x, y=split_y, x_offsets=x_offsets, y_offsets=y_offsets)
+        np.savez_compressed(
+            output / f"{name}.npz", x=split_x, y=split_y, x_offsets=x_offsets, y_offsets=y_offsets
+        )
         shapes[name] = split_x.shape
     return shapes

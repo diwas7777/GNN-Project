@@ -52,7 +52,9 @@ class EngineSmokeTest(unittest.TestCase):
         )
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-        train_mae = train_one_epoch(model, loaders["train"], torch.eye(5), optimizer, scaler, torch.device("cpu"))
+        train_mae = train_one_epoch(
+            model, loaders["train"], torch.eye(5), optimizer, scaler, torch.device("cpu")
+        )
         metrics = evaluate(model, loaders["test"], torch.eye(5), scaler, torch.device("cpu"))
 
         self.assertGreaterEqual(train_mae, 0.0)
