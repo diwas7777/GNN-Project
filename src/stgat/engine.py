@@ -10,6 +10,10 @@ from .metrics import masked_mae, metric_tuple
 from .model import STGATWithAdjacency
 
 
+def should_use_amp(model: torch.nn.Module, device: torch.device, requested: bool) -> bool:
+    return requested and device.type == "cuda" and not isinstance(model, torch.nn.DataParallel)
+
+
 def inverse_speed(tensor: torch.Tensor, scaler: StandardScaler) -> torch.Tensor:
     return tensor * float(scaler.std) + float(scaler.mean)
 
@@ -42,6 +46,7 @@ def train_one_epoch(
 ) -> float:
     model.train()
     adjacency = adjacency.to(device) if adjacency is not None else None
+    use_amp = should_use_amp(model, device, use_amp)
     losses: list[float] = []
     scaler_amp = torch.amp.GradScaler("cuda", enabled=use_amp and device.type == "cuda")
     optimizer.zero_grad(set_to_none=True)
@@ -84,6 +89,7 @@ def evaluate(
 ) -> dict[str, Any]:
     model.eval()
     adjacency = adjacency.to(device) if adjacency is not None else None
+    use_amp = should_use_amp(model, device, use_amp)
     predictions = []
     labels = []
     for x, y in dataloader:

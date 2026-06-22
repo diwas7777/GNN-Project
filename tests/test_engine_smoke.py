@@ -4,11 +4,23 @@ import numpy as np
 import torch
 
 from stgat.data import load_npz_splits, make_dataloaders
-from stgat.engine import evaluate, train_one_epoch
+from stgat.engine import evaluate, should_use_amp, train_one_epoch
 from stgat.model import STGAT
 
 
 class EngineSmokeTest(unittest.TestCase):
+    def test_amp_is_disabled_for_dataparallel_even_when_requested(self):
+        model = torch.nn.DataParallel(torch.nn.Linear(2, 2))
+
+        self.assertFalse(should_use_amp(model, torch.device("cuda"), requested=True))
+
+    def test_amp_requires_cuda_and_request_without_dataparallel(self):
+        model = torch.nn.Linear(2, 2)
+
+        self.assertTrue(should_use_amp(model, torch.device("cuda"), requested=True))
+        self.assertFalse(should_use_amp(model, torch.device("cuda"), requested=False))
+        self.assertFalse(should_use_amp(model, torch.device("cpu"), requested=True))
+
     def test_train_and_evaluate_on_synthetic_data(self):
         rng = np.random.default_rng(42)
         train_x = rng.normal(size=(4, 12, 5, 2)).astype(np.float32)

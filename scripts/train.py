@@ -11,7 +11,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from stgat.config import load_config
 from stgat.data import load_raw_split_arrays, make_dataloaders
-from stgat.engine import evaluate, save_checkpoint, train_one_epoch
+from stgat.engine import evaluate, save_checkpoint, should_use_amp, train_one_epoch
 from stgat.graph import load_adjacency
 from stgat.model import STGAT, STGATWithAdjacency
 
@@ -60,16 +60,17 @@ def main() -> None:
         dropout=model_config["dropout"],
     ).to(device)
     adjacency_for_engine = adjacency
-    use_amp = device.type == "cuda" and training.get("amp", True)
+    requested_amp = training.get("amp", True)
     if device.type == "cuda" and training.get("multi_gpu", False) and torch.cuda.device_count() > 1:
         model = torch.nn.DataParallel(STGATWithAdjacency(model, adjacency.to(device)))
         adjacency_for_engine = None
         print(f"Using {torch.cuda.device_count()} GPUs with DataParallel")
-        if use_amp:
-            use_amp = False
+        use_amp = should_use_amp(model, device, requested_amp)
+        if requested_amp and not use_amp:
             print("Disabling CUDA automatic mixed precision with DataParallel")
     else:
         print(f"Using device: {device}")
+        use_amp = should_use_amp(model, device, requested_amp)
     if use_amp:
         print("Using CUDA automatic mixed precision")
     optimizer = torch.optim.Adam(
