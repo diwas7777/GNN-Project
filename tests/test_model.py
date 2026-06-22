@@ -4,7 +4,7 @@ from unittest.mock import patch
 import torch
 
 from stgat.engine import save_checkpoint
-from stgat.model import GatedFusion, GatedTemporalConv, STGAT, STGATWithAdjacency
+from stgat.model import GatedFusion, GatedTemporalConv, GraphAttentionHead, STGAT, STGATWithAdjacency
 
 
 class ModelTest(unittest.TestCase):
@@ -24,6 +24,22 @@ class ModelTest(unittest.TestCase):
 
         self.assertEqual(output.shape, (3, 12, 5, 4))
         self.assertEqual(conv_inputs_are_contiguous, [True, True, True])
+
+    def test_graph_attention_softmax_uses_float32_for_half_precision_inputs(self):
+        head = GraphAttentionHead(in_features=2, out_features=4, dropout=0.0).half()
+        x = torch.randn(3, 5, 2).half()
+        adjacency = torch.eye(5).half()
+        original_softmax = torch.softmax
+
+        def checked_softmax(input, dim, *args, **kwargs):
+            self.assertEqual(input.dtype, torch.float32)
+            return original_softmax(input, dim, *args, **kwargs)
+
+        with patch("torch.softmax", checked_softmax):
+            output = head(x, adjacency)
+
+        self.assertEqual(output.shape, (3, 5, 4))
+        self.assertEqual(output.dtype, torch.float16)
 
     def test_stgat_forward_shape_and_adaptive_adjacency_registration(self):
         model = STGAT(

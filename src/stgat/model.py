@@ -75,17 +75,18 @@ class GraphAttentionHead(nn.Module):
     def forward(self, x: torch.Tensor, adjacency: torch.Tensor) -> torch.Tensor:
         x = x.contiguous()
         h = self.proj(x).contiguous()
-        src_scores = self.attn_src(h)
-        dst_scores = self.attn_dst(h).transpose(1, 2).contiguous()
+        src_scores = self.attn_src(h).float()
+        dst_scores = self.attn_dst(h).transpose(1, 2).contiguous().float()
         scores = self.leaky_relu(src_scores + dst_scores)
-        edge_weights = adjacency.to(device=x.device, dtype=x.dtype).contiguous()
+        edge_weights = adjacency.to(device=x.device, dtype=torch.float32).contiguous()
         if edge_weights.dim() != 2 or edge_weights.shape[0] != x.shape[1] or edge_weights.shape[1] != x.shape[1]:
             raise ValueError(f"adjacency shape {tuple(edge_weights.shape)} does not match node count {x.shape[1]}")
         mask = edge_weights > 0
         scores = scores + torch.log(edge_weights.clamp_min(1e-6)).unsqueeze(0)
         scores = scores.masked_fill(~mask.unsqueeze(0), torch.finfo(scores.dtype).min)
         attention = self.dropout(torch.softmax(scores, dim=-1)).contiguous()
-        return torch.bmm(attention, h) + self.bias + self.residual(x)
+        attended = torch.bmm(attention, h.float()).to(dtype=h.dtype)
+        return attended + self.bias + self.residual(x)
 
 
 class GraphAttentionLayer(nn.Module):
