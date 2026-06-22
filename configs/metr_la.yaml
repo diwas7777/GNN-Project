@@ -14,7 +14,7 @@ model:
   dropout: 0.6
 
 training:
-  batch_size: 32
+  batch_size: 16
   epochs: 100
   learning_rate: 0.0003
   weight_decay: 0.0
@@ -22,5 +22,7 @@ training:
   null_value: 0.0
   cuda: true
   multi_gpu: true
+  amp: true
+  accumulation_steps: 2
   num_workers: 0
   checkpoint_path: checkpoints/metr_la_best.pt

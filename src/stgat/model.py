@@ -73,15 +73,18 @@ class GraphAttentionHead(nn.Module):
             nn.init.constant_(self.residual.bias, 0.1)
 
     def forward(self, x: torch.Tensor, adjacency: torch.Tensor) -> torch.Tensor:
-        h = self.proj(x)
-        scores = self.leaky_relu(self.attn_src(h) + self.attn_dst(h).transpose(1, 2))
-        edge_weights = adjacency.to(device=x.device, dtype=x.dtype)
+        x = x.contiguous()
+        h = self.proj(x).contiguous()
+        src_scores = self.attn_src(h)
+        dst_scores = self.attn_dst(h).transpose(1, 2).contiguous()
+        scores = self.leaky_relu(src_scores + dst_scores)
+        edge_weights = adjacency.to(device=x.device, dtype=x.dtype).contiguous()
         if edge_weights.dim() != 2 or edge_weights.shape[0] != x.shape[1] or edge_weights.shape[1] != x.shape[1]:
             raise ValueError(f"adjacency shape {tuple(edge_weights.shape)} does not match node count {x.shape[1]}")
         mask = edge_weights > 0
         scores = scores + torch.log(edge_weights.clamp_min(1e-6)).unsqueeze(0)
         scores = scores.masked_fill(~mask.unsqueeze(0), torch.finfo(scores.dtype).min)
-        attention = self.dropout(torch.softmax(scores, dim=-1))
+        attention = self.dropout(torch.softmax(scores, dim=-1)).contiguous()
         return torch.bmm(attention, h) + self.bias + self.residual(x)
 
 
@@ -247,6 +250,8 @@ class STGAT(nn.Module):
                 nn.init.constant_(module.bias, 0.1)
 
     def forward(self, x: torch.Tensor, physical_adjacency: torch.Tensor) -> torch.Tensor:
+        x = x.contiguous()
+        physical_adjacency = physical_adjacency.contiguous()
         if x.dim() != 4:
             raise ValueError(f"x must have shape [batch, time, nodes, features], got {tuple(x.shape)}")
         if x.shape[1] != self.input_steps:
@@ -273,4 +278,4 @@ class STGATWithAdjacency(nn.Module):
         self.register_buffer("physical_adjacency", physical_adjacency)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.model(x, self.physical_adjacency)
+        return self.model(x.contiguous(), self.physical_adjacency.contiguous())

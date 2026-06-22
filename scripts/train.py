@@ -66,6 +66,8 @@ def main() -> None:
         print(f"Using {torch.cuda.device_count()} GPUs with DataParallel")
     else:
         print(f"Using device: {device}")
+    if device.type == "cuda" and training.get("amp", True):
+        print("Using CUDA automatic mixed precision")
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=training["learning_rate"],
@@ -85,6 +87,8 @@ def main() -> None:
             device,
             null_value=training.get("null_value", 0.0),
             grad_clip=training.get("grad_clip", 5.0),
+            use_amp=training.get("amp", True),
+            accumulation_steps=training.get("accumulation_steps", 1),
         )
         val_metrics = evaluate(
             model,
@@ -93,6 +97,7 @@ def main() -> None:
             arrays["scaler"],
             device,
             null_value=training.get("null_value", 0.0),
+            use_amp=training.get("amp", True),
         )
         val_mae = val_metrics["average"]["mae"]
         print(f"epoch={epoch} train_mae={train_mae:.4f} val_mae={val_mae:.4f}")

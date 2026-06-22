@@ -37,23 +37,38 @@ def train_one_epoch(
     device: torch.device,
     null_value: float = 0.0,
     grad_clip: float | None = 5.0,
+    use_amp: bool = False,
+    accumulation_steps: int = 1,
 ) -> float:
     model.train()
     adjacency = adjacency.to(device) if adjacency is not None else None
     losses: list[float] = []
-    for x, y in dataloader:
+    scaler_amp = torch.amp.GradScaler("cuda", enabled=use_amp and device.type == "cuda")
+    optimizer.zero_grad(set_to_none=True)
+    for step, (x, y) in enumerate(dataloader, start=1):
         x = x.to(device)
         y = y.to(device)
-        optimizer.zero_grad()
-        pred = _forward(model, x, adjacency)
-        pred_speed = inverse_speed(pred[..., 0], scaler)
-        y_speed = inverse_speed(y[..., 0], scaler)
-        loss = masked_mae(pred_speed, y_speed, null_value)
-        loss.backward()
-        if grad_clip is not None:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-        optimizer.step()
+        with torch.amp.autocast("cuda", enabled=use_amp and device.type == "cuda"):
+            pred = _forward(model, x, adjacency)
+            pred_speed = inverse_speed(pred[..., 0], scaler)
+            y_speed = inverse_speed(y[..., 0], scaler)
+            loss = masked_mae(pred_speed, y_speed, null_value)
+            scaled_loss = loss / accumulation_steps
+        scaler_amp.scale(scaled_loss).backward()
+        if step % accumulation_steps == 0:
+            if grad_clip is not None:
+                scaler_amp.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            scaler_amp.step(optimizer)
+            scaler_amp.update()
+            optimizer.zero_grad(set_to_none=True)
         losses.append(float(loss.detach().cpu()))
+    if len(losses) % accumulation_steps != 0:
+        if grad_clip is not None:
+            scaler_amp.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        scaler_amp.step(optimizer)
+        scaler_amp.update()
     return sum(losses) / max(len(losses), 1)
 
 
@@ -65,6 +80,7 @@ def evaluate(
     scaler: StandardScaler,
     device: torch.device,
     null_value: float = 0.0,
+    use_amp: bool = False,
 ) -> dict[str, Any]:
     model.eval()
     adjacency = adjacency.to(device) if adjacency is not None else None
@@ -73,7 +89,9 @@ def evaluate(
     for x, y in dataloader:
         x = x.to(device)
         y = y.to(device)
-        predictions.append(inverse_speed(_forward(model, x, adjacency)[..., 0], scaler).detach().cpu())
+        with torch.amp.autocast("cuda", enabled=use_amp and device.type == "cuda"):
+            pred_batch = _forward(model, x, adjacency)
+        predictions.append(inverse_speed(pred_batch[..., 0], scaler).detach().cpu())
         labels.append(inverse_speed(y[..., 0], scaler).detach().cpu())
     pred = torch.cat(predictions, dim=0)
     true = torch.cat(labels, dim=0)
