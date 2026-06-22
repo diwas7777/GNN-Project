@@ -1,0 +1,35 @@
+.DS_Store
+Thumbs.db
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Local notebooks/editor state
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+# Raw and generated traffic datasets
+# data/
+*.h5
+
+# Training outputs and model artifacts
+checkpoints/
+runs/
+outputs/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Logs
+*.log
+logs/

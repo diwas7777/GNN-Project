@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import torch
+
+from .data import StandardScaler
+from .metrics import masked_mae, metric_tuple
+
+
+def inverse_speed(tensor: torch.Tensor, scaler: StandardScaler) -> torch.Tensor:
+    return tensor * float(scaler.std) + float(scaler.mean)
+
+
+def train_one_epoch(
+    model: torch.nn.Module,
+    dataloader,
+    adjacency: torch.Tensor,
+    optimizer: torch.optim.Optimizer,
+    scaler: StandardScaler,
+    device: torch.device,
+    null_value: float = 0.0,
+    grad_clip: float | None = 5.0,
+) -> float:
+    model.train()
+    adjacency = adjacency.to(device)
+    losses: list[float] = []
+    for x, y in dataloader:
+        x = x.to(device)
+        y = y.to(device)
+        optimizer.zero_grad()
+        pred = model(x, adjacency)
+        pred_speed = inverse_speed(pred[..., 0], scaler)
+        y_speed = inverse_speed(y[..., 0], scaler)
+        loss = masked_mae(pred_speed, y_speed, null_value)
+        loss.backward()
+        if grad_clip is not None:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        optimizer.step()
+        losses.append(float(loss.detach().cpu()))
+    return sum(losses) / max(len(losses), 1)
+
+
+@torch.no_grad()
+def evaluate(
+    model: torch.nn.Module,
+    dataloader,
+    adjacency: torch.Tensor,
+    scaler: StandardScaler,
+    device: torch.device,
+    null_value: float = 0.0,
+) -> dict[str, Any]:
+    model.eval()
+    adjacency = adjacency.to(device)
+    predictions = []
+    labels = []
+    for x, y in dataloader:
+        x = x.to(device)
+        y = y.to(device)
+        predictions.append(inverse_speed(model(x, adjacency)[..., 0], scaler).detach().cpu())
+        labels.append(inverse_speed(y[..., 0], scaler).detach().cpu())
+    pred = torch.cat(predictions, dim=0)
+    true = torch.cat(labels, dim=0)
+    horizons = []
+    for index in range(pred.shape[1]):
+        mae, mape, rmse = metric_tuple(pred[:, index], true[:, index], null_value)
+        horizons.append({"horizon": index + 1, "mae": mae, "mape": mape, "rmse": rmse})
+    mae, mape, rmse = metric_tuple(pred, true, null_value)
+    return {"average": {"mae": mae, "mape": mape, "rmse": rmse}, "horizons": horizons}
+
+
+def save_checkpoint(
+    path: str | Path,
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    epoch: int,
+    config: dict[str, Any],
+    best_val_mae: float,
+) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "epoch": epoch,
+            "config": config,
+            "best_val_mae": best_val_mae,
+        },
+        path,
+    )
+
+
+def load_checkpoint(path: str | Path, model: torch.nn.Module, device: torch.device) -> dict[str, Any]:
+    checkpoint = torch.load(path, map_location=device)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    return checkpoint

@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+import torch
+
+from stgat.config import load_config
+from stgat.data import load_split_arrays, make_dataloaders
+from stgat.engine import evaluate, save_checkpoint, train_one_epoch
+from stgat.graph import load_adjacency
+from stgat.model import STGAT
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train STGAT")
+    parser.add_argument("--config", required=True, help="Path to YAML config")
+    parser.add_argument("--epochs", type=int, default=None, help="Override configured epoch count")
+    parser.add_argument("--limit-batches", type=int, default=None, help="Debug limit for smoke tests")
+    return parser.parse_args()
+
+
+def maybe_limit(loader, limit):
+    if limit is None:
+        return loader
+    return list(loader)[:limit]
+
+
+def main() -> None:
+    args = parse_args()
+    config = load_config(args.config)
+    training = config["training"]
+    data_config = config["data"]
+    model_config = config["model"]
+
+    device = torch.device("cuda" if training.get("cuda", False) and torch.cuda.is_available() else "cpu")
+    arrays = load_split_arrays(data_config["data_dir"])
+    dataloaders = make_dataloaders(arrays, batch_size=training["batch_size"], num_workers=training.get("num_workers", 0))
+    train_loader = maybe_limit(dataloaders["train"], args.limit_batches)
+    val_loader = maybe_limit(dataloaders["val"], args.limit_batches)
+
+    adjacency = load_adjacency(data_config["adjacency_path"], data_config.get("adjacency_type", "raw"))
+    model = STGAT(
+        num_nodes=model_config["num_nodes"],
+        input_features=model_config["input_features"],
+        input_steps=model_config["input_steps"],
+        output_steps=model_config["output_steps"],
+        hidden_channels=model_config["hidden_channels"],
+        attention_heads=tuple(model_config["attention_heads"]),
+        blocks=model_config["blocks"],
+        dropout=model_config["dropout"],
+    ).to(device)
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=training["learning_rate"],
+        weight_decay=training.get("weight_decay", 0.0),
+    )
+
+    epochs = args.epochs if args.epochs is not None else training["epochs"]
+    best_val_mae = float("inf")
+    checkpoint_path = Path(training["checkpoint_path"])
+    for epoch in range(1, epochs + 1):
+        train_mae = train_one_epoch(
+            model,
+            train_loader,
+            adjacency,
+            optimizer,
+            arrays["scaler"],
+            device,
+            null_value=training.get("null_value", 0.0),
+            grad_clip=training.get("grad_clip", 5.0),
+        )
+        val_metrics = evaluate(
+            model,
+            val_loader,
+            adjacency,
+            arrays["scaler"],
+            device,
+            null_value=training.get("null_value", 0.0),
+        )
+        val_mae = val_metrics["average"]["mae"]
+        print(f"epoch={epoch} train_mae={train_mae:.4f} val_mae={val_mae:.4f}")
+        if val_mae < best_val_mae:
+            best_val_mae = val_mae
+            save_checkpoint(checkpoint_path, model, optimizer, epoch, config, best_val_mae)
+            print(f"saved checkpoint: {checkpoint_path}")
+
+
+if __name__ == "__main__":
+    main()

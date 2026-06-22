@@ -1,0 +1,25 @@
+data:
+  data_dir: GNN_Project/data/PEMS-BAY
+  adjacency_path: GNN_Project/data/PEMS-BAY/adj_mx_bay.pkl
+  adjacency_type: raw
+
+model:
+  num_nodes: 325
+  input_features: 2
+  input_steps: 12
+  output_steps: 12
+  hidden_channels: 64
+  attention_heads: [4, 4, 4, 6]
+  blocks: 4
+  dropout: 0.6
+
+training:
+  batch_size: 64
+  epochs: 100
+  learning_rate: 0.0003
+  weight_decay: 0.0
+  grad_clip: 5.0
+  null_value: 0.0
+  cuda: true
+  num_workers: 0
+  checkpoint_path: GNN_Project/checkpoints/pems_bay_best.pt
