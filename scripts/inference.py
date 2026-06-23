@@ -15,13 +15,21 @@ Usage (Kaggle / notebook):
     predictor = TrafficPredictor.from_checkpoint(
         checkpoint="checkpoints/metr_la_best.pt",
         data_dir="data/METR-LA",
-        adjacency="data/METR-LA/adj_mx_dijsk.pkl",
     )
+    # Predict for all 207 sensors at once
     forecast = predictor.predict(
-        speeds=last_12_speeds,       # shape (12, 207)
-        timestamps=last_12_timestamps,  # nanosecond unix timestamps
+        speeds=last_12_speeds,           # shape (12, 207) — raw mph
+        timestamps=last_12_timestamps,   # shape (12,) — nanosecond unix
     )
-    # forecast.shape → (12, 207)  — predicted speeds for next 12 steps
+    # forecast.shape → (12, 207)
+
+    # Or predict for a single sensor
+    pred = predictor.predict_single(
+        speeds=[62.1, 61.8, 63.0, 61.5, 60.2, 59.8,
+                60.5, 61.0, 62.3, 63.1, 62.8, 61.9],
+        node_index=0,
+    )
+    # pred.shape → (12,)
 """
 
 from __future__ import annotations
@@ -219,24 +227,52 @@ class TrafficPredictor:
         ----------
         speeds : sequence of float
             Last ``input_steps`` speed values for the sensor.
+            Must contain exactly ``input_steps`` values (default: 12).
         timestamps : sequence of float, optional
             Nanosecond timestamps corresponding to each speed value.
+            If provided must have the same length as ``speeds``.
         node_index : int
             Which sensor index this data belongs to (0-based).
 
         Returns
         -------
         forecast : np.ndarray, shape ``(output_steps,)``
+            Predicted speeds for the next 12 time steps.
+
+        Example
+        -------
+        >>> # Sensor 0, last 12 readings (oldest → newest)
+        >>> pred = predictor.predict_single(
+        ...     speeds=[62.1, 61.8, 63.0, 61.5, 60.2, 59.8,
+        ...              60.5, 61.0, 62.3, 63.1, 62.8, 61.9],
+        ...     node_index=0,
+        ... )
+        >>> pred.shape
+        (12,)
         """
         input_steps = self.model.input_steps
         num_nodes = self.model.num_nodes
 
-        speeds_arr = np.zeros((input_steps, num_nodes), dtype=np.float32)
-        speeds_arr[:, node_index] = np.asarray(speeds, dtype=np.float32)
+        speeds_arr = np.asarray(speeds, dtype=np.float64)
+        if speeds_arr.ndim != 1:
+            raise ValueError(f"speeds must be a 1-D sequence, got shape {speeds_arr.shape}")
+        if len(speeds_arr) != input_steps:
+            raise ValueError(
+                f"speeds must contain exactly {input_steps} values (one per input time step), "
+                f"got {len(speeds_arr)}"
+            )
 
-        ts_arr = np.asarray(timestamps, dtype=np.float64) if timestamps is not None else None
+        if timestamps is not None:
+            ts_arr = np.asarray(timestamps, dtype=np.float64)
+            if ts_arr.ndim != 1 or len(ts_arr) != input_steps:
+                raise ValueError(f"timestamps must contain exactly {input_steps} values, got {len(ts_arr)}")
+        else:
+            ts_arr = None
 
-        full_forecast = self.predict(speeds_arr, ts_arr)
+        full = np.zeros((input_steps, num_nodes), dtype=np.float32)
+        full[:, node_index] = speeds_arr.astype(np.float32)
+
+        full_forecast = self.predict(full, ts_arr)
         return full_forecast[:, node_index]
 
 
