@@ -122,17 +122,25 @@ class TrafficPredictor:
         )
 
         # --- Adjacency ---
-        if adjacency is None:
-            adj_path = config_dict.get("data", {}).get("adjacency_path")
-            if adj_path is None:
-                raise ValueError("No adjacency path provided and none found in checkpoint config")
-            adj_path = Path(adj_path)
-            if not adj_path.is_absolute():
-                adj_path = Path(data_dir).parent / adj_path
-            adj_type = config_dict.get("data", {}).get("adjacency_type", adjacency_type)
-        else:
+        if adjacency is not None:
             adj_path = Path(adjacency)
             adj_type = adjacency_type
+        else:
+            adj_path = config_dict.get("data", {}).get("adjacency_path")
+            adj_type = config_dict.get("data", {}).get("adjacency_type", adjacency_type)
+            if adj_path is not None:
+                adj_path = Path(adj_path)
+                # Config paths are relative to the project root, not data_dir
+                if not adj_path.is_absolute():
+                    adj_path = PROJECT_ROOT / adj_path
+            else:
+                # Fallback: look for any .pkl adjacency in the data directory
+                candidates = sorted(Path(data_dir).glob("adj_mx*.pkl"))
+                if not candidates:
+                    raise FileNotFoundError(
+                        f"No adjacency .pkl found in {data_dir} and none in checkpoint config"
+                    )
+                adj_path = candidates[0]
 
         adj_matrix = load_adjacency(adj_path, adj_type)
 
