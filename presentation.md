@@ -739,26 +739,6 @@ The paper's output head is not specified in detail. This implementation uses a *
 | **Output head** | Not specified | 768→512→ReLU→512→12 | Explicit bottleneck design |
 | **Dropout location** | GAT coefficients only | GAT coefficients + STBlock output | Additional regularization for small dataset |
 
-### Production-Grade Additions (Not in Paper)
-
-```
-    ┌─────────────────────────────────────────────────────────────┐
-    │              ENGINEERING ADDITIONS                           │
-    │                                                              │
-    │  ✓ Gradient clipping (max_norm=5.0)                         │
-    │  ✓ Gradient accumulation (effective batch size control)     │
-    │  ✓ Mixed-precision training (float16/bfloat16 AMP)          │
-    │  ✓ torch.compile support (PyTorch 2.0+)                     │
-    │  ✓ ReduceLROnPlateau + early stopping                       │
-    │  ✓ Structured logging (console + file + CSV metrics)        │
-    │  ✓ Graceful shutdown (SIGINT/SIGTERM → emergency save)      │
-    │  ✓ Deterministic seeding for reproducibility                │
-    │  ✓ Full test suite (model, data, engine, integration)       │
-    │  ✓ CI/CD pipeline (GitHub Actions: test + lint + typecheck) │
-    │  ✓ Inference API with input validation                      │
-    │  ✓ Training visualization (2×2 panel: loss, LR, duration)   │
-    └─────────────────────────────────────────────────────────────┘
-```
 
 ---
 
@@ -1124,15 +1104,3 @@ gnn_project/
 | Inference speed | ~200 samples/sec (GPU) |
 | Lines of code | ~3,000 (core library) |
 
-### Why This Approach Works for Traffic
-
-Traffic is **not just a time series** and **not just a graph problem** — it's both, simultaneously. The spatial structure (road network) constrains how traffic flows, but the temporal dynamics (rush hours, incidents) determine when and how strongly those constraints matter. STGAT's architecture directly mirrors this dual nature.
-
----
-
-## Thank You
-
-**Questions?**
-
-> Paper: Kong et al., "STGAT: Spatial-Temporal Graph Attention Networks for Traffic Flow Forecasting," IEEE Access, 2020
-> Implementation: github.com/[user]/GNN_Project — PyTorch, June 2026
